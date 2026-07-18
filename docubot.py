@@ -9,6 +9,7 @@ Core DocuBot class responsible for:
 
 import os
 import glob
+import re
 
 class DocuBot:
     def __init__(self, docs_folder="docs", llm_client=None):
@@ -48,23 +49,39 @@ class DocuBot:
     # Index Construction (Phase 1)
     # -----------------------------------------------------------
 
+    def _split_into_sections(self, text):
+        """
+        Split a document into simple paragraph-like sections.
+        We use blank lines as the separator so retrieval can target
+        smaller chunks of text.
+        """
+        cleaned = text.strip()
+        if not cleaned:
+            return []
+
+        sections = [section.strip() for section in re.split(r"\n\s*\n", cleaned) if section.strip()]
+        return sections or [cleaned]
+
     def build_index(self, documents):
         """
-        TODO (Phase 1):
-        Build a tiny inverted index mapping lowercase words to the documents
-        they appear in.
+        Build a tiny inverted index mapping lowercase words to the document
+        sections they appear in.
 
         Example structure:
         {
-            "token": ["AUTH.md", "API_REFERENCE.md"],
-            "database": ["DATABASE.md"]
+            "token": [("AUTH.md", "section text"), ("API_REFERENCE.md", "section text")],
+            "database": [("DATABASE.md", "section text")]
         }
 
-        Keep this simple: split on whitespace, lowercase tokens,
+        Keep this simple: split on blank lines, lowercase tokens,
         ignore punctuation if needed.
         """
         index = {}
-        # TODO: implement simple indexing
+        for filename, text in documents:
+            for section in self._split_into_sections(text):
+                tokens = set(re.findall(r"\w+", section.lower()))
+                for token in tokens:
+                    index.setdefault(token, []).append((filename, section))
         return index
 
     # -----------------------------------------------------------
@@ -73,7 +90,6 @@ class DocuBot:
 
     def score_document(self, query, text):
         """
-        TODO (Phase 1):
         Return a simple relevance score for how well the text matches the query.
 
         Suggested baseline:
@@ -81,19 +97,44 @@ class DocuBot:
         - Count how many appear in the text
         - Return the count as the score
         """
-        # TODO: implement scoring
-        return 0
+        if not query:
+            return 0
+
+        query_tokens = re.findall(r"\w+", query.lower())
+        text_tokens = set(re.findall(r"\w+", text.lower()))
+
+        return sum(1 for token in query_tokens if token in text_tokens)
 
     def retrieve(self, query, top_k=3):
         """
-        TODO (Phase 1):
-        Use the index and scoring function to select top_k relevant document snippets.
+        Use the index and scoring function to select top_k relevant document
+        sections.
 
         Return a list of (filename, text) sorted by score descending.
         """
-        results = []
-        # TODO: implement retrieval logic
-        return results[:top_k]
+        if not query:
+            return []
+
+        query_tokens = re.findall(r"\w+", query.lower())
+        candidate_sections = []
+        seen = set()
+
+        for token in query_tokens:
+            for filename, section in self.index.get(token, []):
+                key = (filename, section)
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidate_sections.append((filename, section))
+
+        scored_results = []
+        for filename, section in candidate_sections:
+            score = self.score_document(query, section)
+            if score > 0:
+                scored_results.append((score, filename, section))
+
+        scored_results.sort(key=lambda item: item[0], reverse=True)
+        return [(filename, section) for _, filename, section in scored_results[:top_k]]
 
     # -----------------------------------------------------------
     # Answering Modes
